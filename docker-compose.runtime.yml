@@ -1,0 +1,52 @@
+name: opencart-runtime
+
+services:
+  opencart:
+    image: digikwal/opencart:latest
+    ports:
+      - "8080:80"
+    environment:
+      OPENCART_USERNAME: admin
+      OPENCART_PASSWORD: admin
+      OPENCART_ADMIN_EMAIL: admin@example.com
+      OPENCART_HTTP_SERVER: http://localhost:8080/
+      DB_DRIVER: mysqli
+      DB_HOSTNAME: mariadb
+      DB_USERNAME: opencart
+      DB_PASSWORD: opencart
+      DB_DATABASE: opencart
+      DB_PORT: 3306
+      DB_PREFIX: oc_
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - opencart
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: opencart
+      MARIADB_DATABASE: opencart
+      MARIADB_USER: opencart
+      MARIADB_PASSWORD: opencart
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-popencart"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - opencart
+
+volumes:
+  mariadb-data:
+
+networks:
+  opencart:
+    driver: bridge
+    name: opencart-runtime-network

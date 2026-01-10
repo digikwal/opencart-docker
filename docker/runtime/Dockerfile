@@ -46,7 +46,9 @@ COPY docker/php/docker-opencart-entrypoint /usr/local/bin/docker-opencart-entryp
 
 RUN chmod +x /usr/local/bin/docker-opencart-entrypoint \
     && mkdir -p /var/log/supervisor /var/run/supervisor \
-    && mkdir -p /var/log/nginx /var/cache/nginx
+    && mkdir -p /var/log/nginx /var/cache/nginx \
+    && mkdir -p /var/www/storage \
+    && chown -R www-data:www-data /var/www/storage
 
 EXPOSE 80
 

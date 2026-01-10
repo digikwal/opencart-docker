@@ -13,6 +13,28 @@ cd /var/www/upload
 CONFIG_FILE="config.php"
 ADMIN_CONFIG_FILE="admin/config.php"
 
+# Storage path override (must end with a trailing slash in OpenCart config)
+storage_path="${OPENCART_STORAGE_PATH:-/var/www/storage}"
+case "$storage_path" in
+    */) ;;
+    *) storage_path="${storage_path}/" ;;
+esac
+
+# Replace a define() line regardless of its current value.
+update_define_value() {
+    local file=$1
+    local key=$2
+    local value=$3
+
+    if [ ! -f "$file" ] || [ ! -s "$file" ]; then
+        return
+    fi
+
+    if grep -q "define('$key'" "$file"; then
+        sed -i -E "s|define\\('$key',[^)]*\\);|define('$key', '$value');|g" "$file"
+    fi
+}
+
 # Function to update a config value only if it differs from the environment variable
 update_config_if_changed() {
     local file=$1
@@ -45,6 +67,7 @@ if [ -f "$CONFIG_FILE" ]; then
     update_config_if_changed "$CONFIG_FILE" "DB_PASSWORD" "${DB_PASSWORD:-opencart}"
     update_config_if_changed "$CONFIG_FILE" "DB_DATABASE" "${DB_DATABASE:-opencart}"
     update_config_if_changed "$CONFIG_FILE" "DB_PORT" "${DB_PORT:-3306}"
+    update_define_value "$CONFIG_FILE" "DIR_STORAGE" "$storage_path"
 fi
 
 if [ -f "$ADMIN_CONFIG_FILE" ]; then
@@ -55,6 +78,7 @@ if [ -f "$ADMIN_CONFIG_FILE" ]; then
     update_config_if_changed "$ADMIN_CONFIG_FILE" "DB_PASSWORD" "${DB_PASSWORD:-opencart}"
     update_config_if_changed "$ADMIN_CONFIG_FILE" "DB_DATABASE" "${DB_DATABASE:-opencart}"
     update_config_if_changed "$ADMIN_CONFIG_FILE" "DB_PORT" "${DB_PORT:-3306}"
+    update_define_value "$ADMIN_CONFIG_FILE" "DIR_STORAGE" "$storage_path"
 fi
 
 # ================================================================
@@ -93,6 +117,14 @@ if [ ! -f "install.lock" ] && [ -f "install/cli_install.php" ]; then
         || echo "--- OpenCart installation failed ---"
 fi
 
+# Ensure storage path is set after installation
+if [ -f "$CONFIG_FILE" ]; then
+    update_define_value "$CONFIG_FILE" "DIR_STORAGE" "$storage_path"
+fi
+if [ -f "$ADMIN_CONFIG_FILE" ]; then
+    update_define_value "$ADMIN_CONFIG_FILE" "DIR_STORAGE" "$storage_path"
+fi
+
 # ================================================================
 # STEP 3: SETUP WEB SERVER FILES
 # ================================================================
@@ -111,6 +143,21 @@ fi
 echo "--- STEP 4: Fixing ownership on /var/www/upload ---"
 chown -R www-data:www-data /var/www/upload
 echo "--- Ownership fixed ---"
+
+# Ensure storage path exists and has correct ownership
+echo "--- STEP 4: Ensuring storage path exists at ${storage_path} ---"
+mkdir -p "$storage_path"
+chown -R www-data:www-data "$storage_path"
+
+# Migrate legacy storage if the new path is empty
+legacy_storage="/var/www/upload/system/storage"
+if [ "$storage_path" != "${legacy_storage}/" ] && [ -d "$legacy_storage" ]; then
+    if [ -z "$(ls -A "$storage_path" 2>/dev/null)" ]; then
+        echo "--- STEP 4: Migrating storage from ${legacy_storage} to ${storage_path} ---"
+        cp -a "$legacy_storage/." "$storage_path/"
+        chown -R www-data:www-data "$storage_path"
+    fi
+fi
 
 # Set permissions for storage relocation
 echo "--- STEP 4: Setting permissions for storage relocation ---"
