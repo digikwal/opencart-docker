@@ -20,6 +20,13 @@ case "$storage_path" in
     *) storage_path="${storage_path}/" ;;
 esac
 
+# Remove install/ after a successful install unless explicitly kept.
+keep_install_dir="${OPENCART_KEEP_INSTALL_DIR:-false}"
+case "$keep_install_dir" in
+    1|true|TRUE|yes|YES) keep_install_dir="true" ;;
+    *) keep_install_dir="false" ;;
+esac
+
 # Replace a define() line regardless of its current value.
 update_define_value() {
     local file=$1
@@ -115,6 +122,12 @@ if [ ! -f "install.lock" ] && [ -f "install/cli_install.php" ]; then
         && touch "install.lock" \
         && echo "--- OpenCart installation completed ---" \
         || echo "--- OpenCart installation failed ---"
+fi
+
+# Remove the installer directory once OpenCart is installed.
+if [ "$keep_install_dir" = "false" ] && [ -f "install.lock" ] && [ -d "install" ]; then
+    echo "--- Removing install directory for security ---"
+    rm -rf install
 fi
 
 # Ensure storage path is set after installation
