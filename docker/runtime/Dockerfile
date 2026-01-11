@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.5
 # OpenCart runtime image with nginx + php-fpm
 ARG PHP_VERSION=8.4
 
@@ -7,17 +8,22 @@ ENV TZ=UTC
 
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       cron \
       nginx \
       supervisor \
-      tzdata \
-    && rm -rf /var/lib/apt/lists/*
+      tzdata
 
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
-RUN install-php-extensions \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/usr/src/php \
+    --mount=type=cache,target=/tmp/pear \
+    install-php-extensions \
     @composer \
     apcu \
     gd \

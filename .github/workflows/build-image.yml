@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      platforms:
+        description: "Target platforms: linux/amd64, linux/arm64, or linux/amd64,linux/arm64"
+        required: false
+        default: linux/amd64
+        type: string
   schedule:
     - cron: "30 */6 * * *"
   workflow_run:
@@ -30,15 +35,15 @@ env:
   UPSTREAM_REPO: opencart/opencart
 
 jobs:
-  build:
+  prepare:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.gate.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
+      multiarch: ${{ steps.platforms.outputs.multiarch }}
     steps:
-      - name: Checkout docker branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Resolve release tag
         id: release
         env:
@@ -95,45 +100,179 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout upstream release
+      - name: Resolve platforms
         if: steps.gate.outputs.build == 'true'
+        id: platforms
+        run: |
+          set -euo pipefail
+          platforms="${{ inputs.platforms }}"
+          if [ -z "$platforms" ]; then
+            platforms="linux/amd64"
+          fi
+          case "$platforms" in
+            linux/amd64|linux/arm64|linux/amd64,linux/arm64) ;;
+            *)
+              echo "Unsupported platforms: $platforms"
+              exit 1
+              ;;
+          esac
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          if [ "$platforms" = "linux/amd64,linux/arm64" ]; then
+            echo "multiarch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "multiarch=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build_amd64:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.build == 'true' && contains(needs.prepare.outputs.platforms, 'linux/amd64') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docker branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout upstream release
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ steps.release.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.tag }}
           path: upstream
 
       - name: Prepare build context
-        if: steps.gate.outputs.build == 'true'
         run: |
           set -euo pipefail
           rm -rf upstream/docker
           cp -R docker upstream/docker
           cp .dockerignore upstream/.dockerignore
 
-      - name: Set up QEMU
-        if: steps.gate.outputs.build == 'true'
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
-        if: steps.gate.outputs.build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: steps.gate.outputs.build == 'true'
         uses: docker/login-action@v3
         with:
           username: digikwal
           password: ${{ secrets.DIGIKWAL_OPENCART }}
 
-      - name: Build and push image
-        if: steps.gate.outputs.build == 'true'
+      - name: Resolve tags
+        id: tags
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          if [ "${{ needs.prepare.outputs.multiarch }}" = "true" ]; then
+            {
+              echo "tags<<EOF"
+              echo "${{ env.IMAGE_NAME }}:${tag}-amd64"
+              echo "${{ env.IMAGE_NAME }}:latest-amd64"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "tags<<EOF"
+              echo "${{ env.IMAGE_NAME }}:${tag}"
+              echo "${{ env.IMAGE_NAME }}:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image (amd64)
         uses: docker/build-push-action@v5
         with:
           context: ./upstream
           file: ./upstream/docker/runtime/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.tag }}
-            ${{ env.IMAGE_NAME }}:latest
+          platforms: linux/amd64
+          cache-from: type=gha,scope=opencart-runtime
+          cache-to: type=gha,mode=max,scope=opencart-runtime
+          tags: ${{ steps.tags.outputs.tags }}
+
+  build_arm64:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.build == 'true' && contains(needs.prepare.outputs.platforms, 'linux/arm64') }}
+    runs-on: ubuntu-24.04-arm64
+    steps:
+      - name: Checkout docker branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout upstream release
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.prepare.outputs.tag }}
+          path: upstream
+
+      - name: Prepare build context
+        run: |
+          set -euo pipefail
+          rm -rf upstream/docker
+          cp -R docker upstream/docker
+          cp .dockerignore upstream/.dockerignore
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: digikwal
+          password: ${{ secrets.DIGIKWAL_OPENCART }}
+
+      - name: Resolve tags
+        id: tags
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          if [ "${{ needs.prepare.outputs.multiarch }}" = "true" ]; then
+            {
+              echo "tags<<EOF"
+              echo "${{ env.IMAGE_NAME }}:${tag}-arm64"
+              echo "${{ env.IMAGE_NAME }}:latest-arm64"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "tags<<EOF"
+              echo "${{ env.IMAGE_NAME }}:${tag}"
+              echo "${{ env.IMAGE_NAME }}:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./upstream
+          file: ./upstream/docker/runtime/Dockerfile
+          push: true
+          platforms: linux/arm64
+          cache-from: type=gha,scope=opencart-runtime
+          cache-to: type=gha,mode=max,scope=opencart-runtime
+          tags: ${{ steps.tags.outputs.tags }}
+
+  manifest:
+    needs: [prepare, build_amd64, build_arm64]
+    if: ${{ needs.prepare.outputs.build == 'true' && needs.prepare.outputs.multiarch == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: digikwal
+          password: ${{ secrets.DIGIKWAL_OPENCART }}
+
+      - name: Create multi-arch manifests
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          docker buildx imagetools create \
+            -t "${{ env.IMAGE_NAME }}:${tag}" \
+            -t "${{ env.IMAGE_NAME }}:latest" \
+            "${{ env.IMAGE_NAME }}:${tag}-amd64" \
+            "${{ env.IMAGE_NAME }}:${tag}-arm64"
