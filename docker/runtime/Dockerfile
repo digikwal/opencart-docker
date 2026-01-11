@@ -21,7 +21,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    --mount=type=cache,target=/tmp/pear \
     install-php-extensions \
     @composer \
     apcu \
